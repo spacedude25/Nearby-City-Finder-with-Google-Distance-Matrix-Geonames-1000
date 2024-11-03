@@ -1,4 +1,4 @@
-const FILE_ID = '1RI-Z7xr5bR3tVxLqevjx3IVIyrmm363i'; // Google Drive file ID for your public TXT file
+const FILE_ID = 'Your_Google_File_Id'; // Google Drive file ID for your public TXT file with the list of Cities from Geonames
 const RADIUS_KM = 100; // Maximum radius for driving distance and Haversine pre-filter in kilometers
 const PLACES_API_KEY = 'YOUR_API_KEY'; // Your Google API key for Geocoding
 const DISTANCE_MATRIX_API_KEY = 'YOUR_API_KEY'; // Your Google API key for Distance Matrix
