@@ -1,0 +1,140 @@
+const FILE_ID = '1RI-Z7xr5bR3tVxLqevjx3IVIyrmm363i'; // Google Drive file ID for your public TXT file
+const RADIUS_KM = 100; // Maximum radius for driving distance and Haversine pre-filter in kilometers
+const PLACES_API_KEY = 'YOUR_API_KEY'; // Your Google API key for Geocoding
+const DISTANCE_MATRIX_API_KEY = 'YOUR_API_KEY'; // Your Google API key for Distance Matrix
+
+/**
+ * Main function to find nearby cities using the GeoNames TXT data.
+ */
+function findNearbyCities() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const data = sheet.getDataRange().getValues();
+  const cityDatabase = loadCityDatabaseFromTXT(); // Load city database once
+
+  for (let i = 1; i < data.length; i++) { // Start from row 2 to skip the header
+    const location = data[i][0]; // City, Country in Column A
+
+    if (location) {
+      const coordinates = getCoordinates(location);
+      if (coordinates) {
+        const nearbyCities = findCitiesWithinRadius(coordinates.lat, coordinates.lng, cityDatabase);
+        sheet.getRange(i + 1, 2).setValue(nearbyCities.join(', ')); // Display nearby cities in Column B
+      } else {
+        sheet.getRange(i + 1, 2).setValue('Coordinates not found');
+      }
+    }
+  }
+}
+
+/**
+ * Function to get latitude and longitude of a location using Google Geocoding API.
+ */
+function getCoordinates(location) {
+  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(location)}&key=${PLACES_API_KEY}`;
+  const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+  const data = JSON.parse(response.getContentText());
+
+  if (data.status === 'OK' && data.results.length > 0) {
+    return {
+      lat: parseFloat(data.results[0].geometry.location.lat),
+      lng: parseFloat(data.results[0].geometry.location.lng)
+    };
+  } else {
+    Logger.log(`No coordinates found for location: ${location}`);
+    return null;
+  }
+}
+
+/**
+ * Load the city database from a TXT file on Google Drive.
+ */
+function loadCityDatabaseFromTXT() {
+  const file = DriveApp.getFileById(FILE_ID);
+  const txtData = file.getBlob().getDataAsString();
+  
+  const lines = txtData.split('\n');
+  return lines.slice(1).map(line => {
+    const columns = line.split('\t');
+    return {
+      name: columns[1],
+      lat: parseFloat(columns[4]),
+      lng: parseFloat(columns[5]),
+      country: columns[8],
+      population: parseInt(columns[14], 10) || 0
+    };
+  }).filter(city => !isNaN(city.lat) && !isNaN(city.lng) && city.population > 10000);
+}
+
+/**
+ * Find the 100 closest cities within a specified radius (in KM) from given latitude and longitude, using driving distance.
+ */
+function findCitiesWithinRadius(lat, lng, cityDatabase) {
+  const nearbyCities = [];
+
+  cityDatabase.forEach(city => {
+    const haversineDistance = calculateDistance(lat, lng, city.lat, city.lng);
+    if (haversineDistance <= RADIUS_KM) { // Only consider cities within the Haversine filter radius
+      const drivingDistance = getDrivingDistance(lat, lng, city.lat, city.lng);
+      if (drivingDistance && drivingDistance <= RADIUS_KM * 1000) { // Convert RADIUS_KM to meters
+        nearbyCities.push({
+          name: `${city.name} (${(drivingDistance / 1000).toFixed(1)} km, ${city.country}, Pop: ${city.population})`,
+          distance: drivingDistance
+        });
+      }
+    }
+  });
+
+  const sortedCities = nearbyCities
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 100) // Get the 100 closest cities
+    .map(city => city.name);
+
+  Logger.log(`Sorted nearby cities for (${lat}, ${lng}): ${sortedCities}`);
+
+  return sortedCities;
+}
+
+/**
+ * Function to get driving distance between two coordinates using Google Distance Matrix API.
+ */
+function getDrivingDistance(lat1, lng1, lat2, lng2) {
+  const origins = `${lat1},${lng1}`;
+  const destinations = `${lat2},${lng2}`;
+  const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origins}&destinations=${destinations}&key=${DISTANCE_MATRIX_API_KEY}`;
+
+  try {
+    const response = UrlFetchApp.fetch(url);
+    const data = JSON.parse(response.getContentText());
+    
+    if (data.status === 'OK' && data.rows[0].elements[0].status === 'OK') {
+      return data.rows[0].elements[0].distance.value; // Distance in meters
+    } else {
+      Logger.log(`Distance Matrix API error for coordinates (${lat1}, ${lng1}) to (${lat2}, ${lng2}): ${data.status}`);
+      return null;
+    }
+  } catch (e) {
+    Logger.log(`Error fetching driving distance: ${e.message}`);
+    return null;
+  }
+}
+
+/**
+ * Calculate the Haversine distance between two coordinates.
+ */
+function calculateDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371; // Radius of the Earth in kilometers
+  const dLat = toRadians(lat2 - lat1);
+  const dLng = toRadians(lng2 - lng1);
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
+            Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/**
+ * Convert degrees to radians.
+ */
+function toRadians(deg) {
+  return deg * (Math.PI / 180);
+}
